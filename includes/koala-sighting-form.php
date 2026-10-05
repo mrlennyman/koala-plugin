@@ -413,7 +413,7 @@ function koala_sighting_form_shortcode() {
                     <option value="Malnourished">Malnourished</option>
                     <option value="Moribund">Moribund</option>
                     <option value="No apparent distress">No apparent distress</option>
-                    <option value="No apparent Injury">No apparent Injury</option>
+                    <option value="No apparent Injury">No apparent injury</option>
                     <option value="Unknown">Unknown</option>
                     <option value="Waterlogged">Waterlogged</option>
                 </select>
