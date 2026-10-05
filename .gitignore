@@ -1,0 +1,8 @@
+debug.log
+
+# Legacy copies superseded by includes/ (not loaded; contain an old hardcoded API key)
+/koala-utils.php
+/koala-sighting-form.php
+/koala-location-map.php
+/koala-release-map.php
+/public-sighting-form.php
