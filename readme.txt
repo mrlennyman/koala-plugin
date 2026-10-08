@@ -3,7 +3,7 @@ Contributors: websitealchemy
 Tags: acf, custom post type, wildlife, maps, forms
 Requires at least: 6.2
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.2.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,11 @@ Install the release zip once via Plugins > Add New > Upload Plugin and activate 
 Enter your Google Maps API key under Settings > Koala Plugin, or define KRS_MAPS_BROWSER_KEY in wp-config.php (the constant takes priority).
 
 == Changelog ==
+
+= 1.2.1 =
+* The release location editor now matches the rescue location editor: town and postcode are visible read-only fields, failed or empty lookups show a message and never blank an existing value, typed addresses are looked up (previously only suggestions, dragging and GPS worked), the pin-lookup fallback fills a missing town or postcode, and warnings appear for an address more than about 2 km from the pin or a partial Google match. The "Keep current pin" setting applies to both editors.
+* The release save request now returns notices when it keeps an existing town or postcode.
+* Release values are no longer escaped twice (an apostrophe or ampersand in a release address showed as &#039; or &amp;), and the release summary now lists town and postcode.
 
 = 1.2.0 =
 * Location fields now stay in step. In wp-admin, changing the Location Map on a koala edit screen fills in koala_address, address (street), latitude, longitude, town and postcode from the map value (no Google call). Anything the editor changed by hand in the same save is kept, and a save where the map did not change touches nothing. Quick Edit, bulk edit, imports and front-end forms do not trigger the sync.

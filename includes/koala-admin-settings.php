@@ -72,9 +72,9 @@ add_action('admin_init', function () {
     // Location editor section
     add_settings_section(
         'koala_location_editor_section',
-        __('Location Editor (koala record page)', 'koala-plugin'),
+        __('Location Editors (koala record page)', 'koala-plugin'),
         function () {
-            echo '<p>' . esc_html__('Options for the front-end location editor.', 'koala-plugin') . '</p>';
+            echo '<p>' . esc_html__('Options for the front-end rescue location and release location editors.', 'koala-plugin') . '</p>';
         },
         'koala-plugin-settings'
     );
@@ -85,7 +85,7 @@ add_action('admin_init', function () {
         function () {
             $checked = (int) get_option('koala_location_keep_pin', 0) === 1;
             echo '<input type="checkbox" id="koala_location_keep_pin" name="koala_location_keep_pin" value="1" ' . checked($checked, true, false) . ' aria-describedby="koala_location_keep_pin_desc" />';
-            echo '<p id="koala_location_keep_pin_desc" class="description">' . esc_html__('Adds a checkbox to the location editor. When ticked, a typed address updates the town, postcode and LGA but does not move the pin or change latitude and longitude.', 'koala-plugin') . '</p>';
+            echo '<p id="koala_location_keep_pin_desc" class="description">' . esc_html__('Adds a checkbox to the rescue and release location editors. When ticked, a typed address updates the town, postcode (and LGA, for the rescue location) but does not move the pin or change latitude and longitude.', 'koala-plugin') . '</p>';
         },
         'koala-plugin-settings',
         'koala_location_editor_section'

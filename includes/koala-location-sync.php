@@ -429,6 +429,13 @@ function koala_plugin_ajax_save_release_location() {
     $town     = koala_loc_post('town');
     $postcode = koala_loc_post('postcode');
     $street   = koala_loc_street_from_address($address);
+    $notices  = [];
+    if ($town === '' && trim((string) get_field('release_town', $post_id, false)) !== '') {
+        $notices[] = 'Town was not found for this location, so the existing town was kept.';
+    }
+    if ($postcode === '' && trim((string) get_field('release_post_code', $post_id, false)) !== '') {
+        $notices[] = 'Postcode was not found for this location, so the existing postcode was kept.';
+    }
 
     $values = [
         'release_address'     => $address,
@@ -448,7 +455,11 @@ function koala_plugin_ajax_save_release_location() {
     update_field(KOALA_REL_CONFIRMED_KEY, $confirmed, $post_id);
 
     koala_loc_clear_caches($post_id);
-    wp_send_json_success('Location saved');
+    wp_send_json_success([
+        'message' => 'Location saved',
+        'notices' => $notices,
+        'handler' => 'koala-plugin',
+    ]);
 }
 
 // Lets the editor preview the LGA that will be used when Google does not return one
