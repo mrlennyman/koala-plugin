@@ -19,7 +19,9 @@ Requires Advanced Custom Fields and a `koala` custom post type with the ACF fiel
 
 == Installation ==
 
-Install the release zip once via Plugins > Add New > Upload Plugin and activate it. After that, new tagged versions appear as a normal "Update available" notice on the Plugins page (the repository is public, so no token is needed).Enter your Google Maps API key under Settings > Koala Plugin, or define KRS_MAPS_BROWSER_KEY in wp-config.php (the constant takes priority).
+Install the release zip once via Plugins > Add New > Upload Plugin and activate it. After that, new tagged versions appear as a normal "Update available" notice on the Plugins page (the repository is public, so no token is needed).
+
+Enter your Google Maps API key under Settings > Koala Plugin, or define KRS_MAPS_BROWSER_KEY in wp-config.php (the constant takes priority).
 
 == Changelog ==
 
