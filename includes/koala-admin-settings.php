@@ -51,12 +51,44 @@ add_action('admin_init', function () {
             $value = get_option('koala_maps_api_key', '');
             echo '<input type="text" id="koala_maps_api_key" name="koala_maps_api_key" value="' . esc_attr($value) . '" class="regular-text" autocomplete="off" aria-describedby="koala_maps_api_key_desc" />';
             echo '<p id="koala_maps_api_key_desc" class="description">' . esc_html__('Your Google Maps JavaScript API key (Places library enabled). Stored as a site option, not hardcoded in plugin files.', 'koala-plugin') . '</p>';
-            if ('' === $value) {
+            if (defined('KRS_MAPS_BROWSER_KEY') && KRS_MAPS_BROWSER_KEY) {
+                echo '<p class="description">' . esc_html__('KRS_MAPS_BROWSER_KEY is defined in wp-config.php and is being used instead of this field. This field is only a fallback.', 'koala-plugin') . '</p>';
+            } elseif ('' === $value) {
                 echo '<p class="description" style="color:#b32d2e;">' . esc_html__('No API key set — maps will not load until one is entered.', 'koala-plugin') . '</p>';
             }
         },
         'koala-plugin-settings',
         'koala_maps_api_section'
+    );
+
+    register_setting('koala_plugin_settings_group', 'koala_location_keep_pin', [
+        'type' => 'boolean',
+        'sanitize_callback' => function ($value) {
+            return empty($value) ? 0 : 1;
+        },
+        'default' => 0,
+    ]);
+
+    // Location editor section
+    add_settings_section(
+        'koala_location_editor_section',
+        __('Location Editor (koala record page)', 'koala-plugin'),
+        function () {
+            echo '<p>' . esc_html__('Options for the front-end location editor.', 'koala-plugin') . '</p>';
+        },
+        'koala-plugin-settings'
+    );
+
+    add_settings_field(
+        'koala_location_keep_pin',
+        '<label for="koala_location_keep_pin">' . esc_html__('Offer "Keep current pin"', 'koala-plugin') . '</label>',
+        function () {
+            $checked = (int) get_option('koala_location_keep_pin', 0) === 1;
+            echo '<input type="checkbox" id="koala_location_keep_pin" name="koala_location_keep_pin" value="1" ' . checked($checked, true, false) . ' aria-describedby="koala_location_keep_pin_desc" />';
+            echo '<p id="koala_location_keep_pin_desc" class="description">' . esc_html__('Adds a checkbox to the location editor. When ticked, a typed address updates the town, postcode and LGA but does not move the pin or change latitude and longitude.', 'koala-plugin') . '</p>';
+        },
+        'koala-plugin-settings',
+        'koala_location_editor_section'
     );
 
     // Map defaults section
@@ -157,6 +189,14 @@ add_action('admin_init', function () {
         'koala-plugin-settings',
         'koala_field_toggles_section'
     );
+
+    // Diagnostics (read-only, last on the page)
+    add_settings_section(
+        'koala_diagnostics_section',
+        __('Diagnostics: who answers the location save requests', 'koala-plugin'),
+        'koala_plugin_render_handler_diagnostics',
+        'koala-plugin-settings'
+    );
 });
 
 function koala_plugin_sanitize_sighting_form_settings($input) {
@@ -181,8 +221,50 @@ function koala_plugin_sanitize_sighting_form_settings($input) {
     return $output;
 }
 
+// Lists every callback registered on the location save actions, in the order they run.
+// The first one that sends a response ends the request, so the first row is the one that answers.
+function koala_plugin_describe_callback($callback) {
+    try {
+        if (is_array($callback)) {
+            $class = is_object($callback[0]) ? get_class($callback[0]) : $callback[0];
+            return $class . '::' . $callback[1];
+        }
+        $reflection = new ReflectionFunction($callback);
+        $file = $reflection->getFileName() ?: 'internal';
+        $label = is_string($callback) ? $callback . '()' : 'anonymous function';
+        return $label . ' - ' . wp_basename($file) . ':' . $reflection->getStartLine();
+    } catch (Throwable $e) {
+        return 'unknown callback';
+    }
+}
+
+function koala_plugin_render_handler_diagnostics() {
+    global $wp_filter;
+    echo '<p>' . esc_html__('If anything other than "koala_plugin_ajax_save_..." appears above this plugin\'s handler, it runs first. Handlers from the Code Snippets plugin show an "eval()\'d code" file name.', 'koala-plugin') . '</p>';
+    foreach (['wp_ajax_save_koala_location', 'wp_ajax_save_koala_release_location'] as $hook) {
+        echo '<table class="widefat striped" style="max-width:900px;margin-bottom:16px;">';
+        echo '<caption style="text-align:left;font-weight:600;padding:6px 0;">' . esc_html($hook) . '</caption>';
+        echo '<thead><tr><th scope="col" style="width:70px;">' . esc_html__('Order', 'koala-plugin') . '</th><th scope="col" style="width:80px;">' . esc_html__('Priority', 'koala-plugin') . '</th><th scope="col">' . esc_html__('Callback', 'koala-plugin') . '</th></tr></thead><tbody>';
+        $order = 0;
+        if (isset($wp_filter[$hook]) && !empty($wp_filter[$hook]->callbacks)) {
+            $callbacks = $wp_filter[$hook]->callbacks;
+            ksort($callbacks);
+            foreach ($callbacks as $priority => $items) {
+                foreach ($items as $item) {
+                    $order++;
+                    echo '<tr><td>' . (int) $order . '</td><td>' . (int) $priority . '</td><td><code>' . esc_html(koala_plugin_describe_callback($item['function'])) . '</code></td></tr>';
+                }
+            }
+        }
+        if (!$order) {
+            echo '<tr><td colspan="3">' . esc_html__('No handlers registered.', 'koala-plugin') . '</td></tr>';
+        }
+        echo '</tbody></table>';
+    }
+}
+
 add_action('admin_notices', function () {
-    if (!current_user_can('manage_options') || '' !== get_option('koala_maps_api_key', '')) {
+    if (!current_user_can('manage_options') || '' !== koala_plugin_get_maps_key()) {
         return;
     }
     $screen = get_current_screen();

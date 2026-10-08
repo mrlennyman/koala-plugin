@@ -24,7 +24,7 @@ add_action('wp_enqueue_scripts', function () {
         return;
     }
 
-    $maps_api_key = get_option('koala_maps_api_key', '');
+    $maps_api_key = koala_plugin_get_maps_key();
     if ('' === $maps_api_key) {
         return;
     }
@@ -77,97 +77,6 @@ add_action('wp_enqueue_scripts', function () {
             });
         ");
     }
-});
-
-// AJAX handler for koala location map
-add_action('wp_ajax_save_koala_location', 'save_koala_location_callback');
-function save_koala_location_callback() {
-    check_ajax_referer('koala_location_nonce', 'nonce');
-
-    $post_id = intval($_POST['post_id']);
-    if (!$post_id || !is_user_logged_in()) {
-        error_log('koala-utils: save_koala_location - invalid post ID or not logged in');
-        wp_send_json_error('Invalid post ID or not logged in');
-    }
-    if (!function_exists('update_field')) {
-        error_log('koala-utils: save_koala_location - ACF update_field not available');
-        wp_send_json_error('ACF not active');
-    }
-
-    $address   = sanitize_text_field($_POST['address']);
-    $latitude  = round(floatval($_POST['latitude']), 6);
-    $longitude = round(floatval($_POST['longitude']), 6);
-    $town      = sanitize_text_field($_POST['town']);
-    $lga       = sanitize_text_field($_POST['lga']);
-    $postcode  = sanitize_text_field($_POST['postcode']);
-
-    update_field('koala_address', $address, $post_id);
-    update_field('latitude', $latitude, $post_id);
-    update_field('longitude', $longitude, $post_id);
-    update_field('town', $town, $post_id);
-    update_field('lga', $lga, $post_id);
-    update_field('postcode', $postcode, $post_id);
-
-    // ✅ Clean street-only address (ACF key: field_684b501618cf4)
-    $street_address = strpos($address, ',') !== false ? trim(explode(',', $address)[0]) : trim($address);
-    update_field('field_684b501618cf4', $street_address, $post_id);
-
-    // ✅ Save location confirmed by rescuer (ACF key: field_69c314ca25f17)
-    // ACF checkbox requires array of selected values, or empty array to uncheck
-    $location_confirmed = (isset($_POST['location_confirmed']) && $_POST['location_confirmed'] === '1') ? ['1'] : [];
-    update_field('field_69c314ca25f17', $location_confirmed, $post_id);
-
-    $location_map = [
-        'address' => $address,
-        'lat'     => $latitude,
-        'lng'     => $longitude,
-    ];
-    update_field('location_map', $location_map, $post_id);
-    delete_transient('koala_location_' . $post_id);
-    wp_cache_delete($post_id, 'post_meta');
-    wp_send_json_success('Location saved');
-}
-
-// AJAX handler for koala release map
-add_action('wp_ajax_save_koala_release_location', function () {
-    check_ajax_referer('koala_release_location_nonce', 'nonce');
-
-    $post_id = intval($_POST['post_id']);
-    if (!$post_id || !is_user_logged_in()) {
-        error_log('koala-utils: save_koala_release_location - invalid post ID or not logged in');
-        wp_send_json_error('Not logged in');
-    }
-    if (!function_exists('update_field')) {
-        error_log('koala-utils: save_koala_release_location - ACF update_field not available');
-        wp_send_json_error('ACF not active');
-    }
-
-    // Get and sanitize submitted fields
-    $address   = sanitize_text_field($_POST['address']);
-    $latitude  = round(floatval($_POST['latitude']), 6);
-    $longitude = round(floatval($_POST['longitude']), 6);
-    $town      = sanitize_text_field($_POST['town']);
-    $postcode  = sanitize_text_field($_POST['postcode']);
-
-    // Save fields
-    update_field('field_67a94211a55ea', $address, $post_id); // release_address
-    update_field('release_lat', $latitude, $post_id);
-    update_field('release_long', $longitude, $post_id);
-    update_field('release_town', $town, $post_id);
-    update_field('release_post_code', $postcode, $post_id);
-
-    // ✅ Clean street-only address (ACF key: field_68589b4bbcfa3)
-    $street_address = strpos($address, ',') !== false ? trim(explode(',', $address)[0]) : trim($address);
-    update_field('field_68589b4bbcfa3', $street_address, $post_id); // release_street_address
-
-    // ✅ Save location confirmed by releaser (ACF key: field_69c315f087f2f)
-    // ACF checkbox requires array of selected values, or empty array to uncheck
-    $location_confirmed = (isset($_POST['location_confirmed']) && $_POST['location_confirmed'] === '1') ? ['1'] : [];
-    update_field('field_69c315f087f2f', $location_confirmed, $post_id);
-
-    delete_transient('koala_release_' . $post_id);
-    wp_cache_delete($post_id, 'post_meta');
-    wp_send_json_success('Location saved');
 });
 
 // Clear front-end transient cache when a koala post is saved via wp-admin (including ACF fields)
