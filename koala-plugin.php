@@ -2,7 +2,7 @@
 /*
 Plugin Name: Koala CPT Plugin
 Description: Manages Koala CPT shortcodes and maps.
-Version: 1.2.1
+Version: 1.3.0
 Author: John Leonard
 */
 
@@ -16,6 +16,9 @@ define('KOALA_PLUGIN_DIR', plugin_dir_path(__FILE__));
 
 // Load utility and shortcode files
 require_once KOALA_PLUGIN_DIR . 'includes/koala-location-sync.php';
+if (is_admin()) {
+    require_once KOALA_PLUGIN_DIR . 'includes/koala-location-admin-filter.php';
+}
 require_once KOALA_PLUGIN_DIR . 'includes/koala-admin-settings.php';
 require_once KOALA_PLUGIN_DIR . 'includes/koala-utils.php';
 require_once KOALA_PLUGIN_DIR . 'includes/koala-location-map.php';

@@ -3,7 +3,7 @@ Contributors: websitealchemy
 Tags: acf, custom post type, wildlife, maps, forms
 Requires at least: 6.2
 Requires PHP: 7.4
-Stable tag: 1.2.1
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,14 @@ Install the release zip once via Plugins > Add New > Upload Plugin and activate 
 Enter your Google Maps API key under Settings > Koala Plugin, or define KRS_MAPS_BROWSER_KEY in wp-config.php (the constant takes priority).
 
 == Changelog ==
+
+= 1.3.0 =
+* Town, postcode and LGA can now be edited by hand in the rescue location editor (town and postcode in the release editor), so volunteers can fix a missing LGA without going to wp-admin. Automatic lookups still fill the fields, but never overwrite one that has been changed by hand; changing the address text or moving the pin starts afresh.
+* LGA has a suggestion list built from the LGA values already used on koala records (case and spacing variants collapsed, sorted A-Z, cached and refreshed whenever a koala's LGA changes). Free text is still allowed; a typed LGA that matches a known one apart from case or spacing is stored in the known spelling.
+* A blank LGA is highlighted with the message "LGA not found. Please choose it from the list or type it." It does not block saving, and the save confirmation repeats the warning. If the posted LGA is blank and none is stored, the server fills it from other records for that town (when exactly one LGA is used there) and says so, or says it is still missing.
+* "Keep current pin (only update the address details)" is now always available in both editors (the setting has been removed). It is ticked by default when the koala already has valid coordinates and hidden when it has none. A typed address then updates town, postcode and LGA without moving the pin or changing latitude and longitude.
+* Save notices are now returned as kind and text, and posted town, postcode and LGA are cleaned (spacing collapsed, lengths capped) before saving. A blank is still never written over an existing value.
+* wp-admin: the Koalas list has a "Location incomplete" view with a count, listing koalas where the town, postcode, LGA, latitude or longitude is missing or blank.
 
 = 1.2.1 =
 * The release location editor now matches the rescue location editor: town and postcode are visible read-only fields, failed or empty lookups show a message and never blank an existing value, typed addresses are looked up (previously only suggestions, dragging and GPS worked), the pin-lookup fallback fills a missing town or postcode, and warnings appear for an address more than about 2 km from the pin or a partial Google match. The "Keep current pin" setting applies to both editors.

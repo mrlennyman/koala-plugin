@@ -35,7 +35,9 @@ function koala_location_map_shortcode() {
     $postcode  = $location_data['postcode'];
     $confirmed = !empty($location_data['confirmed']);
 
-    $keep_pin_enabled = (int) get_option('koala_location_keep_pin', 0) === 1;
+    // The "Keep current pin" tick-box is only offered when there is already a valid pin to keep
+    $has_coords  = koala_loc_coords_valid($lat, $lng);
+    $lga_options = koala_loc_lga_options();
 
     ob_start();
     ?>
@@ -64,10 +66,9 @@ function koala_location_map_shortcode() {
             background: var(--base-2) !important;
             border: 1px solid rgba(75,117,146,0.5);
         }
-        #koala-location-fields input[readonly] {
-            background: #f0f0f0 !important;
-            color: #333;
-            cursor: default;
+        #koala-location-fields input.koala-field-attention {
+            border: 2px solid #b32d2e !important;
+            box-shadow: 0 0 0 2px rgba(179,45,46,0.25);
         }
         #koala-location-fields button {
             padding: 5px 15px;
@@ -195,19 +196,25 @@ function koala_location_map_shortcode() {
             <input type="text" id="koala-latitude" placeholder="Latitude" value="<?php echo esc_attr($lat); ?>" />
             <label class="koala-field-label" for="koala-longitude">Longitude</label>
             <input type="text" id="koala-longitude" placeholder="Longitude" value="<?php echo esc_attr($lng); ?>" />
-            <?php if ($keep_pin_enabled): ?>
+            <?php if ($has_coords): ?>
             <div id="koala-keep-pin-wrap">
-                <input type="checkbox" id="koala-keep-pin" aria-describedby="koala-keep-pin-help" />
-                <label for="koala-keep-pin">Keep current pin</label>
+                <input type="checkbox" id="koala-keep-pin" checked aria-describedby="koala-keep-pin-help" />
+                <label for="koala-keep-pin">Keep current pin (only update the address details)</label>
             </div>
-            <p id="koala-keep-pin-help" style="margin:0 0 10px 0;font-size:0.9em;">When ticked, a typed address updates the town, postcode and LGA but does not move the pin or change latitude and longitude.</p>
+            <p id="koala-keep-pin-help" style="margin:0 0 10px 0;font-size:0.9em;">Untick this if the new address should also move the pin.</p>
             <?php endif; ?>
-            <label class="koala-field-label" for="koala-town">Town (set from the address)</label>
-            <input type="text" id="koala-town" value="<?php echo esc_attr($town); ?>" readonly />
-            <label class="koala-field-label" for="koala-postcode">Postcode (set from the address)</label>
-            <input type="text" id="koala-postcode" value="<?php echo esc_attr($postcode); ?>" readonly />
-            <label class="koala-field-label" for="koala-lga">LGA (set from the address)</label>
-            <input type="text" id="koala-lga" value="<?php echo esc_attr($lga); ?>" readonly />
+            <label class="koala-field-label" for="koala-town">Town</label>
+            <input type="text" id="koala-town" maxlength="100" autocomplete="off" value="<?php echo esc_attr($town); ?>" />
+            <label class="koala-field-label" for="koala-postcode">Postcode</label>
+            <input type="text" id="koala-postcode" maxlength="10" autocomplete="off" value="<?php echo esc_attr($postcode); ?>" />
+            <label class="koala-field-label" for="koala-lga">LGA</label>
+            <input type="text" id="koala-lga" maxlength="100" autocomplete="off" list="koala-lga-options" aria-describedby="koala-lga-help" value="<?php echo esc_attr($lga); ?>" />
+            <datalist id="koala-lga-options">
+                <?php foreach ($lga_options as $lga_option): ?>
+                <option value="<?php echo esc_attr($lga_option); ?>"></option>
+                <?php endforeach; ?>
+            </datalist>
+            <p id="koala-lga-help" style="margin:0 0 10px 0;font-size:0.9em;">Choose an LGA from the list or type it. Filled in automatically when possible; anything you type is kept.</p>
             <button id="koala-gps-btn" aria-label="Use GPS to find location">Use GPS to Find My Location</button>
             <div id="koala-confirmed-wrap">
                 <input type="checkbox"
@@ -242,6 +249,7 @@ const KOALA_MAX_JUMP_M = 2000; // warn when an address and the pin are further a
 const koalaLoc = {
     seq: 0,
     notes: {},
+    dirty: {}, // fields the editor changed by hand; lookups must not overwrite these
     addressLatLng: null,
     lastAutocompleteValue: '',
     state: '', stateShort: '', country: '', countryShort: '',
@@ -269,6 +277,21 @@ function koalaNote(key, kind, text) {
 function koalaClearNotes() {
     koalaLoc.notes = {};
     koalaNote('', '', '');
+}
+
+// Cleared whenever the address text or the pin changes, so a new place fills fresh values
+function koalaClearDirty() {
+    koalaLoc.dirty = {};
+}
+
+// A blank LGA is highlighted and explained, but never blocks a save
+function koalaUpdateLgaAttention() {
+    const el = koalaEl('koala-lga');
+    if (!el) return;
+    const blank = el.value.trim() === '';
+    el.classList.toggle('koala-field-attention', blank);
+    el.setAttribute('aria-invalid', blank ? 'true' : 'false');
+    koalaNote('lgaBlank', blank ? 'warn' : '', blank ? 'LGA not found. Please choose it from the list or type it.' : '');
 }
 
 function koalaPlain(latLng) {
@@ -317,7 +340,7 @@ function koalaComponents(results) {
 
 // Only ever writes a non-blank value, so a failed lookup can never wipe what is already there
 function koalaSetIfValue(id, value) {
-    if (!value) return false;
+    if (!value || koalaLoc.dirty[id]) return false;
     koalaEl(id).value = value;
     return true;
 }
@@ -331,12 +354,14 @@ function koalaRememberExtras(c) {
 
 function koalaGeocoder() { return new google.maps.Geocoder(); }
 
-// Applies components to the visible fields. If Google left out the town, postcode or LGA it asks again
-// using the pin position (skipped when the components already came from a pin lookup).
+// Applies components to the visible fields. A field the editor changed by hand is left alone. If Google
+// left out the town, postcode or LGA it asks again using the pin position (skipped for pin lookups).
 function koalaApplyComponents(c, pos, opts) {
     opts = opts || {};
     const seq = koalaLoc.seq;
     const prevTown = koalaEl('koala-town').value;
+    const locked = { town: !!koalaLoc.dirty['koala-town'], postcode: !!koalaLoc.dirty['koala-postcode'] };
+    const wanted = function (key) { return !c[key] && !locked[key]; };
     koalaSetIfValue('koala-town', c.town);
     koalaSetIfValue('koala-postcode', c.postcode);
     koalaSetIfValue('koala-lga', c.lga);
@@ -348,11 +373,11 @@ function koalaApplyComponents(c, pos, opts) {
         koalaLgaFallback(googleLga, prevTown, seq);
     };
 
-    const needLookup = !opts.noPinLookup && (!c.town || !c.postcode || !c.lga);
+    const needLookup = !opts.noPinLookup && (wanted('town') || wanted('postcode') || (!c.lga && !koalaLoc.dirty['koala-lga']));
     if (!needLookup) {
         const still = [];
-        if (!c.town) still.push('town');
-        if (!c.postcode) still.push('postcode');
+        if (wanted('town')) still.push('town');
+        if (wanted('postcode')) still.push('postcode');
         finish(c.lga, still);
         return;
     }
@@ -363,27 +388,32 @@ function koalaApplyComponents(c, pos, opts) {
         let lga = c.lga;
         if (status === 'OK' && results && results.length) {
             const c2 = koalaComponents(results);
-            if (!c.town && !koalaSetIfValue('koala-town', c2.town)) still.push('town');
-            if (!c.postcode && !koalaSetIfValue('koala-postcode', c2.postcode)) still.push('postcode');
-            if (!lga && c2.lga) { koalaEl('koala-lga').value = c2.lga; lga = c2.lga; }
+            if (wanted('town') && !koalaSetIfValue('koala-town', c2.town)) still.push('town');
+            if (wanted('postcode') && !koalaSetIfValue('koala-postcode', c2.postcode)) still.push('postcode');
+            if (!lga && c2.lga) { koalaSetIfValue('koala-lga', c2.lga); lga = c2.lga; }
             koalaRememberExtras({ state: c.state || c2.state, stateShort: c.stateShort || c2.stateShort, country: c.country || c2.country, countryShort: c.countryShort || c2.countryShort, streetNumber: c.streetNumber || c2.streetNumber, route: c.route || c2.route });
         } else {
-            if (!c.town) still.push('town');
-            if (!c.postcode) still.push('postcode');
+            if (wanted('town')) still.push('town');
+            if (wanted('postcode')) still.push('postcode');
         }
         finish(lga, still);
     });
 }
 
-// When Google gives no LGA: use the LGA other koala records agree on for this town, else keep what is there
+// When Google gives no LGA, use the LGA other koala records agree on for this town. Whatever happens,
+// a blank LGA ends up highlighted and explained.
 function koalaLgaFallback(googleLga, prevTown, seq) {
     const lgaEl = koalaEl('koala-lga');
     const town = koalaEl('koala-town').value.trim();
-    if (googleLga) { koalaNote('lga', '', ''); return; }
+    if (googleLga || koalaLoc.dirty['koala-lga']) { koalaNote('lga', '', ''); koalaUpdateLgaAttention(); return; }
     const townMoved = town.toLowerCase() !== (prevTown || '').trim().toLowerCase();
-    if (!townMoved && lgaEl.value.trim() !== '') { koalaNote('lga', '', ''); return; }
-    const keptMsg = 'LGA not set automatically. The existing value was kept; you can set it in wp-admin.';
-    if (!town) { koalaNote('lga', 'warn', keptMsg); return; }
+    if (!townMoved && lgaEl.value.trim() !== '') { koalaNote('lga', '', ''); koalaUpdateLgaAttention(); return; }
+
+    const settle = function () {
+        koalaNote('lga', lgaEl.value.trim() !== '' ? 'warn' : '', lgaEl.value.trim() !== '' ? 'No LGA was found for this address, so the previous LGA was kept. Please check it is right.' : '');
+        koalaUpdateLgaAttention();
+    };
+    if (!town) { settle(); return; }
 
     fetch(koalaAjax.ajaxUrl, {
         method: 'POST',
@@ -393,14 +423,14 @@ function koalaLgaFallback(googleLga, prevTown, seq) {
     .then(function (res) { return res.json(); })
     .then(function (json) {
         if (seq !== koalaLoc.seq) return;
-        if (json && json.success && json.data && json.data.lga) {
-            lgaEl.value = json.data.lga;
+        if (json && json.success && json.data && json.data.lga && koalaSetIfValue('koala-lga', json.data.lga)) {
             koalaNote('lga', 'info', 'LGA set from other koala records for ' + town + '.');
+            koalaUpdateLgaAttention();
         } else {
-            koalaNote('lga', 'warn', keptMsg);
+            settle();
         }
     })
-    .catch(function () { if (seq === koalaLoc.seq) koalaNote('lga', 'warn', keptMsg); });
+    .catch(function () { if (seq === koalaLoc.seq) settle(); });
 }
 
 // An address (autocomplete choice or typed text) has been resolved to a place
@@ -548,6 +578,7 @@ function initKoalaMap() {
             }
 
             ++koalaLoc.seq;
+            koalaClearDirty();
             koalaNote('geocode', '', '');
             koalaUseAddressResult(
                 place.geometry.location,
@@ -559,11 +590,21 @@ function initKoalaMap() {
         });
 
         koalaMarker.addListener('dragend', function () {
+            koalaClearDirty();
             const pos = koalaMarker.getPosition();
             latInput.value = pos.lat().toFixed(6);
             lngInput.value = pos.lng().toFixed(6);
             reverseGeocode(pos.lat(), pos.lng());
         });
+
+        // Hand edits are remembered so a lookup never overwrites them; changing the address starts afresh
+        ['koala-town', 'koala-postcode', 'koala-lga'].forEach(function (id) {
+            koalaEl(id).addEventListener('input', function () {
+                koalaLoc.dirty[id] = true;
+                if (id === 'koala-lga') koalaUpdateLgaAttention();
+            });
+        });
+        addressInput.addEventListener('input', koalaClearDirty);
 
         // Typed address (not an autocomplete choice): look it up when the box loses focus
         addressInput.addEventListener('change', function () {
@@ -583,6 +624,7 @@ function initKoalaMap() {
                 return;
             }
             koalaNote('coords', '', '');
+            koalaClearDirty();
             koalaMarker.setPosition({ lat: latVal, lng: lngVal });
             koalaMap.setCenter({ lat: latVal, lng: lngVal });
             reverseGeocode(latVal, lngVal);
@@ -597,6 +639,7 @@ function initKoalaMap() {
                     function (position) {
                         const lat = position.coords.latitude;
                         const lng = position.coords.longitude;
+                        koalaClearDirty();
                         latInput.value = lat.toFixed(6);
                         lngInput.value = lng.toFixed(6);
                         const latlng = { lat, lng };
@@ -655,7 +698,8 @@ function initKoalaMap() {
                 if (response.success) {
                     const notices = (response.data && response.data.notices) || [];
                     koalaNote('save', 'ok', 'Location saved. Reloading...');
-                    notices.forEach(function (text, i) { koalaNote('server' + i, 'warn', text); });
+                    koalaNote('lgaBlank', '', '');
+                    notices.forEach(function (n, i) { koalaNote('server' + i, n.kind === 'info' ? 'info' : 'warn', n.text); });
                     setTimeout(function () { location.reload(); }, notices.length ? 4000 : 1500);
                 } else {
                     btn.disabled = false;
@@ -695,6 +739,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!koalaMapInitialized && typeof initKoalaMap === 'function' && mapEl && !mapEl.children.length) {
                 initKoalaMap();
             }
+            koalaUpdateLgaAttention();
         });
     }
 
@@ -715,6 +760,8 @@ document.addEventListener('DOMContentLoaded', function () {
             ++koalaLoc.seq;
             koalaLoc.addressLatLng = null;
             koalaLoc.lastAutocompleteValue = '';
+            koalaClearDirty();
+            koalaUpdateLgaAttention();
             koalaClearNotes();
             // Reset map and marker
             if (koalaMap && koalaMarker && originalLat !== undefined && originalLng !== undefined) {

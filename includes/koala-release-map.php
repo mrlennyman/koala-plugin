@@ -35,7 +35,8 @@ add_shortcode('koala_release_map', function () {
     $release_postcode  = (string) $release_data['postcode'];
     $release_confirmed = !empty($release_data['confirmed']);
 
-    $keep_pin_enabled = (int) get_option('koala_location_keep_pin', 0) === 1;
+    // The "Keep current pin" tick-box is only offered when there is already a valid pin to keep
+    $has_coords = koala_loc_coords_valid($release_lat, $release_lng);
 
     ob_start();
     ?>
@@ -54,11 +55,6 @@ add_shortcode('koala_release_map', function () {
             margin: 5px 0 10px 0 !important;
             background: var(--base-2) !important;
             border: 1px solid rgba(75,117,146,0.5);
-        }
-        #koala-release-map-wrapper input[readonly] {
-            background: #f0f0f0 !important;
-            color: #333;
-            cursor: default;
         }
         #koala_release_map {
             width: 100%;
@@ -187,17 +183,17 @@ add_shortcode('koala_release_map', function () {
             <input type="text" id="release_lat" placeholder="Latitude" value="<?php echo esc_attr($release_lat); ?>">
             <label class="koala-field-label" for="release_lng">Longitude</label>
             <input type="text" id="release_lng" placeholder="Longitude" value="<?php echo esc_attr($release_lng); ?>">
-            <?php if ($keep_pin_enabled): ?>
+            <?php if ($has_coords): ?>
             <div id="release-keep-pin-wrap">
-                <input type="checkbox" id="release-keep-pin" aria-describedby="release-keep-pin-help" />
-                <label for="release-keep-pin">Keep current pin</label>
+                <input type="checkbox" id="release-keep-pin" checked aria-describedby="release-keep-pin-help" />
+                <label for="release-keep-pin">Keep current pin (only update the address details)</label>
             </div>
-            <p id="release-keep-pin-help" style="margin:0 0 10px 0 !important;font-size:0.9em;">When ticked, a typed address updates the town and postcode but does not move the pin or change latitude and longitude.</p>
+            <p id="release-keep-pin-help" style="margin:0 0 10px 0 !important;font-size:0.9em;">Untick this if the new address should also move the pin.</p>
             <?php endif; ?>
-            <label class="koala-field-label" for="release_town">Town (set from the address)</label>
-            <input type="text" id="release_town" value="<?php echo esc_attr($release_town); ?>" readonly>
-            <label class="koala-field-label" for="release_postcode">Postcode (set from the address)</label>
-            <input type="text" id="release_postcode" value="<?php echo esc_attr($release_postcode); ?>" readonly>
+            <label class="koala-field-label" for="release_town">Town</label>
+            <input type="text" id="release_town" maxlength="100" autocomplete="off" value="<?php echo esc_attr($release_town); ?>">
+            <label class="koala-field-label" for="release_postcode">Postcode</label>
+            <input type="text" id="release_postcode" maxlength="10" autocomplete="off" value="<?php echo esc_attr($release_postcode); ?>">
             <button type="button" id="release_geolocate" aria-label="Use GPS to find location">Use GPS Location</button>
             <div id="release-confirmed-wrap">
                 <input type="checkbox"
@@ -230,7 +226,10 @@ let releaseOriginalLat, releaseOriginalLng;
 
 // Helpers are prefixed kRel so this script can share a page with the location editor
 const K_REL_MAX_JUMP_M = 2000; // warn when an address and the pin are further apart than this
-const kRel = { seq: 0, notes: {}, lastAutocompleteValue: '' };
+const kRel = { seq: 0, notes: {}, dirty: {}, lastAutocompleteValue: '' };
+
+// Cleared whenever the address text or the pin changes, so a new place fills fresh values
+function kRelClearDirty() { kRel.dirty = {}; }
 
 function kRelEl(id) { return document.getElementById(id); }
 
@@ -290,17 +289,19 @@ function kRelComponents(results) {
 
 // Only ever writes a non-blank value, so a failed lookup can never wipe what is already there
 function kRelSetIfValue(id, value) {
-    if (!value) return false;
+    if (!value || kRel.dirty[id]) return false;
     kRelEl(id).value = value;
     return true;
 }
 
 function kRelGeocoder() { return new google.maps.Geocoder(); }
 
-// Applies town/postcode to the visible fields; asks again using the pin position if Google left one out
+// Applies town/postcode to the visible fields. A field the editor changed by hand is left alone; if Google
+// left one out it asks again using the pin position.
 function kRelApplyComponents(c, pos, opts) {
     opts = opts || {};
     const seq = kRel.seq;
+    const wanted = function (key) { return !c[key] && !kRel.dirty['release_' + key]; };
     kRelSetIfValue('release_town', c.town);
     kRelSetIfValue('release_postcode', c.postcode);
 
@@ -309,10 +310,10 @@ function kRelApplyComponents(c, pos, opts) {
             still.length ? 'Not found for this location: ' + still.join(' and ') + '. The existing value was kept.' : '');
     };
 
-    if (opts.noPinLookup || (c.town && c.postcode)) {
+    if (opts.noPinLookup || !(wanted('town') || wanted('postcode'))) {
         const still = [];
-        if (!c.town) still.push('town');
-        if (!c.postcode) still.push('postcode');
+        if (wanted('town')) still.push('town');
+        if (wanted('postcode')) still.push('postcode');
         report(still);
         return;
     }
@@ -322,11 +323,11 @@ function kRelApplyComponents(c, pos, opts) {
         const still = [];
         if (status === 'OK' && results && results.length) {
             const c2 = kRelComponents(results);
-            if (!c.town && !kRelSetIfValue('release_town', c2.town)) still.push('town');
-            if (!c.postcode && !kRelSetIfValue('release_postcode', c2.postcode)) still.push('postcode');
+            if (wanted('town') && !kRelSetIfValue('release_town', c2.town)) still.push('town');
+            if (wanted('postcode') && !kRelSetIfValue('release_postcode', c2.postcode)) still.push('postcode');
         } else {
-            if (!c.town) still.push('town');
-            if (!c.postcode) still.push('postcode');
+            if (wanted('town')) still.push('town');
+            if (wanted('postcode')) still.push('postcode');
         }
         report(still);
     });
@@ -455,6 +456,7 @@ function initReleaseMap() {
         });
 
         releaseMarker.addListener('dragend', function () {
+            kRelClearDirty();
             const pos = releaseMarker.getPosition();
             releaseLatInput.value = pos.lat().toFixed(6);
             releaseLngInput.value = pos.lng().toFixed(6);
@@ -477,6 +479,7 @@ function initReleaseMap() {
             }
 
             ++kRel.seq;
+            kRelClearDirty();
             kRelNote('geocode', '', '');
             kRelUseAddressResult(
                 place.geometry.location,
@@ -485,6 +488,12 @@ function initReleaseMap() {
                 false
             );
         });
+
+        // Hand edits are remembered so a lookup never overwrites them; changing the address starts afresh
+        ['release_town', 'release_postcode'].forEach(function (id) {
+            kRelEl(id).addEventListener('input', function () { kRel.dirty[id] = true; });
+        });
+        releaseAddressInput.addEventListener('input', kRelClearDirty);
 
         // Typed address (not an autocomplete choice): look it up when the box loses focus
         releaseAddressInput.addEventListener('change', function () {
@@ -504,6 +513,7 @@ function initReleaseMap() {
                 return;
             }
             kRelNote('coords', '', '');
+            kRelClearDirty();
             const newLatLng = { lat, lng };
             releaseMap.setCenter(newLatLng);
             releaseMarker.setPosition(newLatLng);
@@ -518,6 +528,7 @@ function initReleaseMap() {
                     function (position) {
                         const lat = position.coords.latitude;
                         const lng = position.coords.longitude;
+                        kRelClearDirty();
                         releaseLatInput.value = lat.toFixed(6);
                         releaseLngInput.value = lng.toFixed(6);
                         const latLng = { lat, lng };
@@ -566,7 +577,7 @@ function initReleaseMap() {
                 if (response.success) {
                     const notices = (response.data && response.data.notices) || [];
                     kRelNote('save', 'ok', 'Location saved. Reloading...');
-                    notices.forEach(function (text, i) { kRelNote('server' + i, 'warn', text); });
+                    notices.forEach(function (n, i) { kRelNote('server' + i, n.kind === 'info' ? 'info' : 'warn', n.text); });
                     setTimeout(function () { location.reload(); }, notices.length ? 4000 : 1500);
                 } else {
                     btn.disabled = false;
@@ -623,6 +634,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             ++kRel.seq;
             kRel.lastAutocompleteValue = '';
+            kRelClearDirty();
             kRel.notes = {};
             kRelNote('', '', '');
             // Reset map and marker

@@ -301,6 +301,110 @@ function koala_loc_post($name) {
     return isset($_POST[$name]) && is_scalar($_POST[$name]) ? sanitize_text_field(wp_unslash($_POST[$name])) : '';
 }
 
+// Trim and collapse runs of whitespace; optionally cap the length
+function koala_loc_collapse($value, $max = 0) {
+    $value = trim((string) preg_replace('/\s+/u', ' ', (string) $value));
+    if ($max > 0) {
+        $value = function_exists('mb_substr') ? mb_substr($value, 0, $max, 'UTF-8') : substr($value, 0, $max);
+    }
+    return $value;
+}
+
+function koala_loc_fold($value) {
+    $value = koala_loc_collapse($value);
+    return function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
+}
+
+function koala_loc_notice($kind, $text) {
+    return ['kind' => $kind, 'text' => $text];
+}
+
+/* ---------- LGA suggestions (datalist) ---------- */
+
+const KOALA_LGA_CACHE_KEY = 'koala_lga_options';
+
+// Distinct LGA values already used on koala records. Case and whitespace variants collapse to the
+// most common spelling; cached until any koala's LGA (or the set of koalas) changes.
+function koala_loc_lga_options() {
+    $cached = get_transient(KOALA_LGA_CACHE_KEY);
+    if (is_array($cached)) {
+        return $cached;
+    }
+    global $wpdb;
+    $options = [];
+    if (isset($wpdb)) {
+        $values = (array) $wpdb->get_col(
+            "SELECT l.meta_value FROM {$wpdb->postmeta} l
+             INNER JOIN {$wpdb->posts} p ON p.ID = l.post_id
+             WHERE l.meta_key = 'lga' AND p.post_type = 'koala'
+               AND p.post_status NOT IN ('trash', 'auto-draft') AND TRIM(l.meta_value) <> ''"
+        );
+        $groups = [];
+        foreach ($values as $value) {
+            $display = koala_loc_collapse($value);
+            if ($display === '') {
+                continue;
+            }
+            $fold = koala_loc_fold($display);
+            $groups[$fold][$display] = ($groups[$fold][$display] ?? 0) + 1;
+        }
+        // Most common spelling wins; on a tie prefer a mixed-case one over ALL CAPS or all lower case
+        $is_mixed = function ($text) {
+            return $text !== strtoupper($text) && $text !== strtolower($text);
+        };
+        foreach ($groups as $variants) {
+            uksort($variants, 'strcmp');
+            $best = null;
+            $best_count = 0;
+            foreach ($variants as $display => $count) {
+                $display = (string) $display;
+                if ($count > $best_count || ($count === $best_count && $is_mixed($display) && !$is_mixed($best))) {
+                    $best = $display;
+                    $best_count = $count;
+                }
+            }
+            $options[] = $best;
+        }
+        usort($options, 'strcasecmp');
+    }
+    set_transient(KOALA_LGA_CACHE_KEY, $options, 12 * HOUR_IN_SECONDS);
+    return $options;
+}
+
+// A typed LGA that matches a known one apart from case or spacing is stored in the known spelling
+function koala_loc_canonical_lga($lga) {
+    $lga = koala_loc_collapse($lga, 100);
+    if ($lga === '') {
+        return '';
+    }
+    $fold = koala_loc_fold($lga);
+    foreach (koala_loc_lga_options() as $option) {
+        if (koala_loc_fold($option) === $fold) {
+            return $option;
+        }
+    }
+    return $lga;
+}
+
+function koala_loc_clear_lga_cache() {
+    delete_transient(KOALA_LGA_CACHE_KEY);
+}
+
+foreach (['added_post_meta', 'updated_post_meta', 'deleted_post_meta'] as $koala_loc_meta_hook) {
+    add_action($koala_loc_meta_hook, function ($meta_id, $post_id, $meta_key) {
+        if ($meta_key === 'lga') {
+            koala_loc_clear_lga_cache();
+        }
+    }, 10, 3);
+}
+foreach (['trashed_post', 'untrashed_post', 'before_delete_post'] as $koala_loc_post_hook) {
+    add_action($koala_loc_post_hook, function ($post_id) {
+        if (get_post_type($post_id) === 'koala') {
+            koala_loc_clear_lga_cache();
+        }
+    });
+}
+
 // Registered at priority 1 so this handler answers before any other handler on the same action
 add_action('wp_ajax_save_koala_location', 'koala_plugin_ajax_save_location', 1);
 function koala_plugin_ajax_save_location() {
@@ -323,9 +427,9 @@ function koala_plugin_ajax_save_location() {
     $lng = round((float) $lng, 6);
 
     $address  = koala_loc_post('address');
-    $town     = koala_loc_post('town');
-    $lga      = koala_loc_post('lga');
-    $postcode = koala_loc_post('postcode');
+    $town     = koala_loc_collapse(koala_loc_post('town'), 100);
+    $lga      = koala_loc_canonical_lga(koala_loc_post('lga'));
+    $postcode = koala_loc_collapse(koala_loc_post('postcode'), 10);
     $notices  = [];
 
     $existing_town = trim((string) get_field('town', $post_id, false));
@@ -336,12 +440,13 @@ function koala_plugin_ajax_save_location() {
     $final_town = $town !== '' ? $town : $existing_town;
     $final_pc   = $postcode !== '' ? $postcode : $existing_pc;
     if ($town === '' && $existing_town !== '') {
-        $notices[] = 'Town was not found for this location, so the existing town was kept.';
+        $notices[] = koala_loc_notice('warn', 'Town was blank, so the existing town was kept.');
     }
     if ($postcode === '' && $existing_pc !== '') {
-        $notices[] = 'Postcode was not found for this location, so the existing postcode was kept.';
+        $notices[] = koala_loc_notice('warn', 'Postcode was blank, so the existing postcode was kept.');
     }
 
+    // A blank LGA is filled from other records for the same town when exactly one LGA is used there
     $final_lga = $lga !== '' ? $lga : $existing_lga;
     if ($lga === '') {
         $town_moved = strcasecmp($final_town, $existing_town) !== 0;
@@ -349,8 +454,11 @@ function koala_plugin_ajax_save_location() {
             $found = koala_loc_lookup_lga($final_town, $post_id);
             if ($found !== '') {
                 $final_lga = $found;
+                $notices[] = koala_loc_notice('info', sprintf('LGA was filled from other koala records for %s.', $final_town));
+            } elseif ($final_lga === '') {
+                $notices[] = koala_loc_notice('warn', 'LGA is still missing. Please choose it from the list or type it.');
             } else {
-                $notices[] = 'LGA not set automatically. Check it and set it in wp-admin if needed.';
+                $notices[] = koala_loc_notice('warn', sprintf('No LGA was found for %1$s, so the existing LGA (%2$s) was kept. Please check it is right.', $final_town, $final_lga));
             }
         }
     }
@@ -426,15 +534,15 @@ function koala_plugin_ajax_save_release_location() {
     }
 
     $address  = koala_loc_post('address');
-    $town     = koala_loc_post('town');
-    $postcode = koala_loc_post('postcode');
+    $town     = koala_loc_collapse(koala_loc_post('town'), 100);
+    $postcode = koala_loc_collapse(koala_loc_post('postcode'), 10);
     $street   = koala_loc_street_from_address($address);
     $notices  = [];
     if ($town === '' && trim((string) get_field('release_town', $post_id, false)) !== '') {
-        $notices[] = 'Town was not found for this location, so the existing town was kept.';
+        $notices[] = koala_loc_notice('warn', 'Town was blank, so the existing town was kept.');
     }
     if ($postcode === '' && trim((string) get_field('release_post_code', $post_id, false)) !== '') {
-        $notices[] = 'Postcode was not found for this location, so the existing postcode was kept.';
+        $notices[] = koala_loc_notice('warn', 'Postcode was blank, so the existing postcode was kept.');
     }
 
     $values = [
