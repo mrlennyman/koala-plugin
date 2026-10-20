@@ -94,6 +94,7 @@ function koala_loc_map_to_fields($map) {
 }
 
 // A town maps to an LGA only when every other koala record with that town agrees on one
+// (spelling variants that match the same configured LGA count as agreeing)
 function koala_loc_lookup_lga($town, $exclude_post_id = 0) {
     global $wpdb;
     $town = trim((string) $town);
@@ -109,7 +110,17 @@ function koala_loc_lookup_lga($town, $exclude_post_id = 0) {
               AND p.ID <> %d
             GROUP BY LOWER(TRIM(l.meta_value))";
     $rows = $wpdb->get_col($wpdb->prepare($sql, strtolower($town), (int) $exclude_post_id));
-    return (is_array($rows) && count($rows) === 1) ? (string) $rows[0] : '';
+    if (!is_array($rows)) {
+        return '';
+    }
+    $found = [];
+    foreach ($rows as $row) {
+        $mapped = koala_loc_match_lga($row);
+        if ($mapped !== '') {
+            $found[koala_loc_fold($mapped)] = $mapped;
+        }
+    }
+    return count($found) === 1 ? (string) reset($found) : '';
 }
 
 function koala_loc_field_key($name, $post_id) {
@@ -319,92 +330,88 @@ function koala_loc_notice($kind, $text) {
     return ['kind' => $kind, 'text' => $text];
 }
 
-/* ---------- LGA suggestions (datalist) ---------- */
+/* ---------- LGA list (Settings > Koala Plugin) ---------- */
 
-const KOALA_LGA_CACHE_KEY = 'koala_lga_options';
+// Used until the list has been saved in Settings
+const KOALA_LGA_DEFAULTS = [
+    'Ballina Shire Council',
+    'Byron Shire Council',
+    'Clarence Valley Council',
+    'Inverell Shire Council',
+    'Kyogle Council',
+    'Lismore City Council',
+    'Richmond Valley Council',
+    'Tweed Shire Council',
+];
 
-// Distinct LGA values already used on koala records. Case and whitespace variants collapse to the
-// most common spelling; cached until any koala's LGA (or the set of koalas) changes.
-function koala_loc_lga_options() {
-    $cached = get_transient(KOALA_LGA_CACHE_KEY);
-    if (is_array($cached)) {
-        return $cached;
-    }
-    global $wpdb;
-    $options = [];
-    if (isset($wpdb)) {
-        $values = (array) $wpdb->get_col(
-            "SELECT l.meta_value FROM {$wpdb->postmeta} l
-             INNER JOIN {$wpdb->posts} p ON p.ID = l.post_id
-             WHERE l.meta_key = 'lga' AND p.post_type = 'koala'
-               AND p.post_status NOT IN ('trash', 'auto-draft') AND TRIM(l.meta_value) <> ''"
-        );
-        $groups = [];
-        foreach ($values as $value) {
-            $display = koala_loc_collapse($value);
-            if ($display === '') {
-                continue;
-            }
-            $fold = koala_loc_fold($display);
-            $groups[$fold][$display] = ($groups[$fold][$display] ?? 0) + 1;
+// Words ignored when deciding whether two LGA names are the same one
+const KOALA_LGA_NOISE_WORDS = ['council', 'shire', 'city', 'regional', 'municipal', 'municipality', 'of', 'the'];
+
+// One LGA per line: cleaned, no blanks, no case-insensitive duplicates, original order kept
+function koala_loc_parse_lga_lines($text) {
+    $list = [];
+    $seen = [];
+    foreach (preg_split('/\R/u', (string) $text) as $line) {
+        $line = koala_loc_collapse(sanitize_text_field($line), 100);
+        if ($line === '') {
+            continue;
         }
-        // Most common spelling wins; on a tie prefer a mixed-case one over ALL CAPS or all lower case
-        $is_mixed = function ($text) {
-            return $text !== strtoupper($text) && $text !== strtolower($text);
-        };
-        foreach ($groups as $variants) {
-            uksort($variants, 'strcmp');
-            $best = null;
-            $best_count = 0;
-            foreach ($variants as $display => $count) {
-                $display = (string) $display;
-                if ($count > $best_count || ($count === $best_count && $is_mixed($display) && !$is_mixed($best))) {
-                    $best = $display;
-                    $best_count = $count;
-                }
-            }
-            $options[] = $best;
+        $fold = koala_loc_fold($line);
+        if (!isset($seen[$fold])) {
+            $seen[$fold] = true;
+            $list[] = $line;
         }
-        usort($options, 'strcasecmp');
     }
-    set_transient(KOALA_LGA_CACHE_KEY, $options, 12 * HOUR_IN_SECONDS);
-    return $options;
+    return $list;
 }
 
-// A typed LGA that matches a known one apart from case or spacing is stored in the known spelling
+// The LGAs offered in the editor: the eight defaults until the list is saved, then exactly what was saved
+function koala_loc_lga_list() {
+    $saved = get_option('koala_lga_list', null);
+    return $saved === null ? KOALA_LGA_DEFAULTS : koala_loc_parse_lga_lines($saved);
+}
+
+// Comparison key: lower case, letters and digits only, "(C)"-style suffixes and noise words removed.
+// "Clarence Valley", "Clarence Valley Council" and "Clarence Valley (A)" all become "clarence valley".
+function koala_loc_lga_key($name) {
+    $key = strtolower((string) $name);
+    $key = preg_replace('/\([^)]*\)/', ' ', $key);
+    $key = preg_replace('/[^a-z0-9]+/', ' ', $key);
+    $words = array_filter(explode(' ', (string) $key), 'strlen');
+    return implode(' ', array_diff($words, KOALA_LGA_NOISE_WORDS));
+}
+
+// Map an LGA name from Google or from the town lookup onto the configured list.
+// No match: the value is returned as given (cleaned), never blocked.
+function koala_loc_match_lga($name, $list = null) {
+    $name = koala_loc_collapse($name);
+    $key  = koala_loc_lga_key($name);
+    if ($name === '' || $key === '') {
+        return $name;
+    }
+    foreach (($list === null ? koala_loc_lga_list() : $list) as $option) {
+        if (koala_loc_lga_key($option) === $key) {
+            return $option;
+        }
+    }
+    return $name;
+}
+
+// A typed LGA that matches a listed one apart from case or spacing is stored in the listed spelling.
+// Anything else is free text and is kept as typed.
 function koala_loc_canonical_lga($lga) {
     $lga = koala_loc_collapse($lga, 100);
     if ($lga === '') {
         return '';
     }
     $fold = koala_loc_fold($lga);
-    foreach (koala_loc_lga_options() as $option) {
+    foreach (koala_loc_lga_list() as $option) {
         if (koala_loc_fold($option) === $fold) {
             return $option;
         }
     }
     return $lga;
 }
-
-function koala_loc_clear_lga_cache() {
-    delete_transient(KOALA_LGA_CACHE_KEY);
-}
-
-foreach (['added_post_meta', 'updated_post_meta', 'deleted_post_meta'] as $koala_loc_meta_hook) {
-    add_action($koala_loc_meta_hook, function ($meta_id, $post_id, $meta_key) {
-        if ($meta_key === 'lga') {
-            koala_loc_clear_lga_cache();
-        }
-    }, 10, 3);
-}
-foreach (['trashed_post', 'untrashed_post', 'before_delete_post'] as $koala_loc_post_hook) {
-    add_action($koala_loc_post_hook, function ($post_id) {
-        if (get_post_type($post_id) === 'koala') {
-            koala_loc_clear_lga_cache();
-        }
-    });
-}
-
 // Registered at priority 1 so this handler answers before any other handler on the same action
 add_action('wp_ajax_save_koala_location', 'koala_plugin_ajax_save_location', 1);
 function koala_plugin_ajax_save_location() {

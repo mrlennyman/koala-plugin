@@ -3,7 +3,7 @@ Contributors: websitealchemy
 Tags: acf, custom post type, wildlife, maps, forms
 Requires at least: 6.2
 Requires PHP: 7.4
-Stable tag: 1.3.0
+Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,11 @@ Install the release zip once via Plugins > Add New > Upload Plugin and activate 
 Enter your Google Maps API key under Settings > Koala Plugin, or define KRS_MAPS_BROWSER_KEY in wp-config.php (the constant takes priority).
 
 == Changelog ==
+
+= 1.4.0 =
+* The LGA drop-down on the location editor now uses a list you control: Settings > Koala Plugin > LGA List, one LGA per line. It starts with exactly eight (Ballina Shire Council, Byron Shire Council, Clarence Valley Council, Inverell Shire Council, Kyogle Council, Lismore City Council, Richmond Valley Council, Tweed Shire Council) and replaces the previous list built from every LGA found on koala records. Free typing of any other LGA is still allowed.
+* An LGA returned by Google, the pin lookup or the town lookup is matched to one of the listed names by ignoring words such as Council, Shire, City and Regional (and "(A)"/"(C)" suffixes), so "Clarence Valley" becomes "Clarence Valley Council". If nothing matches, the value is kept as returned and the save is never blocked. The wp-admin sync and the blank-LGA fill on save use the same matching, and spelling variants of the same LGA no longer count as "ambiguous" in the town lookup.
+* A typed LGA that matches a listed one apart from case or spacing is stored in the listed spelling; any other typed value is kept exactly as typed.
 
 = 1.3.0 =
 * Town, postcode and LGA can now be edited by hand in the rescue location editor (town and postcode in the release editor), so volunteers can fix a missing LGA without going to wp-admin. Automatic lookups still fill the fields, but never overwrite one that has been changed by hand; changing the address text or moving the pin starts afresh.

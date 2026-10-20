@@ -61,6 +61,34 @@ add_action('admin_init', function () {
         'koala_maps_api_section'
     );
 
+    // LGA list section
+    register_setting('koala_plugin_settings_group', 'koala_lga_list', [
+        'type' => 'string',
+        'sanitize_callback' => function ($value) {
+            return implode("\n", koala_loc_parse_lga_lines($value));
+        },
+    ]);
+
+    add_settings_section(
+        'koala_lga_list_section',
+        __('LGA List', 'koala-plugin'),
+        function () {
+            echo '<p>' . esc_html__('The LGAs offered in the LGA drop-down on the location editor.', 'koala-plugin') . '</p>';
+        },
+        'koala-plugin-settings'
+    );
+
+    add_settings_field(
+        'koala_lga_list',
+        '<label for="koala_lga_list">' . esc_html__('LGAs (one per line)', 'koala-plugin') . '</label>',
+        function () {
+            echo '<textarea id="koala_lga_list" name="koala_lga_list" rows="10" class="large-text code" aria-describedby="koala_lga_list_desc">' . esc_textarea(implode("\n", koala_loc_lga_list())) . '</textarea>';
+            echo '<p id="koala_lga_list_desc" class="description">' . esc_html__('Anyone can still type an LGA that is not on this list. When Google or the town lookup returns an LGA, it is matched to one of these names ignoring words such as Council, Shire, City and Regional (so "Clarence Valley" becomes "Clarence Valley Council"). If nothing matches, the value is kept as returned.', 'koala-plugin') . '</p>';
+        },
+        'koala-plugin-settings',
+        'koala_lga_list_section'
+    );
+
     // Map defaults section
     add_settings_section(
         'koala_map_defaults_section',

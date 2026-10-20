@@ -37,7 +37,7 @@ function koala_location_map_shortcode() {
 
     // The "Keep current pin" tick-box is only offered when there is already a valid pin to keep
     $has_coords  = koala_loc_coords_valid($lat, $lng);
-    $lga_options = koala_loc_lga_options();
+    $lga_options = koala_loc_lga_list();
 
     ob_start();
     ?>
@@ -246,6 +246,26 @@ let koalaMap, koalaMarker;
 let originalLat, originalLng;
 
 const KOALA_MAX_JUMP_M = 2000; // warn when an address and the pin are further apart than this
+
+// LGAs from Settings > Koala Plugin. An LGA returned by Google or the town lookup is mapped onto one of these
+// by ignoring words such as Council, Shire, City and Regional; if nothing matches it is kept as returned.
+const KOALA_LGA_LIST = <?php echo wp_json_encode(array_values($lga_options), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+const KOALA_LGA_NOISE = ['council', 'shire', 'city', 'regional', 'municipal', 'municipality', 'of', 'the'];
+
+function koalaLgaKey(name) {
+    return String(name || '').toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[^a-z0-9]+/g, ' ').split(' ')
+        .filter(function (w) { return w && KOALA_LGA_NOISE.indexOf(w) === -1; }).join(' ');
+}
+
+function koalaMapLga(name) {
+    name = String(name || '').replace(/\s+/g, ' ').trim();
+    const key = koalaLgaKey(name);
+    if (!name || !key) return name;
+    for (let i = 0; i < KOALA_LGA_LIST.length; i++) {
+        if (koalaLgaKey(KOALA_LGA_LIST[i]) === key) return KOALA_LGA_LIST[i];
+    }
+    return name;
+}
 const koalaLoc = {
     seq: 0,
     notes: {},
@@ -335,6 +355,7 @@ function koalaComponents(results) {
         });
     });
     if (!out.town && out.sublocality) out.town = out.sublocality;
+    out.lga = koalaMapLga(out.lga);
     return out;
 }
 
@@ -423,7 +444,7 @@ function koalaLgaFallback(googleLga, prevTown, seq) {
     .then(function (res) { return res.json(); })
     .then(function (json) {
         if (seq !== koalaLoc.seq) return;
-        if (json && json.success && json.data && json.data.lga && koalaSetIfValue('koala-lga', json.data.lga)) {
+        if (json && json.success && json.data && json.data.lga && koalaSetIfValue('koala-lga', koalaMapLga(json.data.lga))) {
             koalaNote('lga', 'info', 'LGA set from other koala records for ' + town + '.');
             koalaUpdateLgaAttention();
         } else {
