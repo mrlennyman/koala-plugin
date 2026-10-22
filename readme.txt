@@ -3,7 +3,7 @@ Contributors: websitealchemy
 Tags: acf, custom post type, wildlife, maps, forms
 Requires at least: 6.2
 Requires PHP: 7.4
-Stable tag: 1.4.0
+Stable tag: 1.4.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,9 @@ Install the release zip once via Plugins > Add New > Upload Plugin and activate 
 Enter your Google Maps API key under Settings > Koala Plugin, or define KRS_MAPS_BROWSER_KEY in wp-config.php (the constant takes priority).
 
 == Changelog ==
+
+= 1.4.1 =
+* Fixed the Koalas list in wp-admin loading very slowly: the Location incomplete count is now a single cached query that refreshes when a koala or its location fields change.
 
 = 1.4.0 =
 * The LGA drop-down on the location editor now uses a list you control: Settings > Koala Plugin > LGA List, one LGA per line. It starts with exactly eight (Ballina Shire Council, Byron Shire Council, Clarence Valley Council, Inverell Shire Council, Kyogle Council, Lismore City Council, Richmond Valley Council, Tweed Shire Council) and replaces the previous list built from every LGA found on koala records. Free typing of any other LGA is still allowed.

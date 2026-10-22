@@ -28,16 +28,60 @@ function koala_loc_list_statuses() {
     return $statuses ? $statuses : ['publish', 'draft', 'pending', 'private', 'future'];
 }
 
+const KOALA_LOC_INCOMPLETE_CACHE_KEY = 'koala_loc_incomplete_ids';
+
+function koala_loc_incomplete_keys() {
+    return ['town', 'postcode', 'lga', 'latitude', 'longitude'];
+}
+
+// IDs of koalas where any location field is missing or blank. One lean query on wp_posts with a
+// NOT EXISTS subquery per field (instead of ~10 LEFT JOINs), cached for 10 minutes.
+function koala_loc_incomplete_ids() {
+    $cached = get_transient(KOALA_LOC_INCOMPLETE_CACHE_KEY);
+    if (is_array($cached)) {
+        return $cached;
+    }
+
+    global $wpdb;
+    $statuses     = koala_loc_list_statuses();
+    $placeholders = implode(',', array_fill(0, count($statuses), '%s'));
+    $args         = array_merge(['koala'], $statuses);
+    $conditions   = [];
+    foreach (koala_loc_incomplete_keys() as $key) {
+        $conditions[] = "NOT EXISTS (SELECT 1 FROM {$wpdb->postmeta} pm WHERE pm.post_id = p.ID AND pm.meta_key = %s AND pm.meta_value <> '')";
+        $args[]       = $key;
+    }
+    $sql = "SELECT p.ID FROM {$wpdb->posts} p WHERE p.post_type = %s AND p.post_status IN ($placeholders) AND (" . implode(' OR ', $conditions) . ')';
+
+    $ids = array_map('intval', (array) $wpdb->get_col($wpdb->prepare($sql, $args)));
+    set_transient(KOALA_LOC_INCOMPLETE_CACHE_KEY, $ids, 10 * MINUTE_IN_SECONDS);
+    return $ids;
+}
+
 function koala_loc_incomplete_count() {
-    $query = new WP_Query([
-        'post_type'      => 'koala',
-        'post_status'    => koala_loc_list_statuses(),
-        'fields'         => 'ids',
-        'posts_per_page' => 1,
-        'no_found_rows'  => false,
-        'meta_query'     => koala_loc_incomplete_meta_query(),
-    ]);
-    return (int) $query->found_posts;
+    return count(koala_loc_incomplete_ids());
+}
+
+function koala_loc_incomplete_clear() {
+    delete_transient(KOALA_LOC_INCOMPLETE_CACHE_KEY);
+}
+
+// Refresh the count when a koala, or one of the location fields, changes
+add_action('save_post_koala', 'koala_loc_incomplete_clear');
+add_action('deleted_post', 'koala_loc_incomplete_clear');   // the post is already gone, so its type cannot be checked
+foreach (['trashed_post', 'untrashed_post'] as $koala_loc_incomplete_hook) {
+    add_action($koala_loc_incomplete_hook, function ($post_id) {
+        if (get_post_type($post_id) === 'koala') {
+            koala_loc_incomplete_clear();
+        }
+    });
+}
+foreach (['added_post_meta', 'updated_post_meta', 'deleted_post_meta'] as $koala_loc_incomplete_hook) {
+    add_action($koala_loc_incomplete_hook, function ($meta_id, $post_id, $meta_key) {
+        if (in_array($meta_key, koala_loc_incomplete_keys(), true)) {
+            koala_loc_incomplete_clear();
+        }
+    }, 10, 3);
 }
 
 function koala_loc_filter_active() {
@@ -68,7 +112,10 @@ add_action('pre_get_posts', function ($query) {
     if (!is_admin() || $pagenow !== 'edit.php' || !$query->is_main_query() || $query->get('post_type') !== 'koala' || !koala_loc_filter_active()) {
         return;
     }
-    $ours     = koala_loc_incomplete_meta_query();
-    $existing = $query->get('meta_query');
-    $query->set('meta_query', $existing ? ['relation' => 'AND', $existing, $ours] : $ours);
+    $ids      = koala_loc_incomplete_ids();
+    $existing = $query->get('post__in');
+    if (!empty($existing)) {
+        $ids = array_values(array_intersect($ids, array_map('intval', (array) $existing)));
+    }
+    $query->set('post__in', $ids ? $ids : [0]);
 });
