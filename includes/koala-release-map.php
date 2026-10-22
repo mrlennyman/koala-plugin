@@ -163,15 +163,17 @@ add_shortcode('koala_release_map', function () {
     <p><strong>Town:</strong> <?php echo esc_html($release_town ?: 'Not set'); ?></p>
     <p><strong>Postcode:</strong> <?php echo esc_html($release_postcode ?: 'Not set'); ?></p>
     <p><strong>Location Confirmed:</strong> <?php echo $release_confirmed ? '<strong>✅</strong> Location Confirmed' : '<strong>❌</strong> Not Confirmed'; ?></p>
+    <?php if ($has_coords): ?>
     <p>
         <a id="open-in-google-maps"
-           href="https://www.google.com/maps?q=<?php echo esc_attr($release_lat ?: '-28.8136'); ?>,<?php echo esc_attr($release_lng ?: '153.2773'); ?>"
+           href="https://www.google.com/maps?q=<?php echo esc_attr($release_lat); ?>,<?php echo esc_attr($release_lng); ?>"
            target="_blank"
            rel="noopener"
            class="open-in-google-maps">
             Open in Google Maps ↗
         </a>
     </p>
+    <?php endif; ?>
 </div>
 
     <?php if (is_user_logged_in()): ?>
@@ -206,15 +208,17 @@ add_shortcode('koala_release_map', function () {
             <button id="release_cancel" aria-label="Cancel editing release location">Cancel</button>
             <div id="release_location_message" role="status" aria-live="polite"></div>
             <div id="koala_release_map"></div>
+            <?php if ($has_coords): ?>
             <p>
                 <a id="open-in-google-maps"
-                   href="https://www.google.com/maps?q=<?php echo esc_attr($release_lat ?: '-28.8136'); ?>,<?php echo esc_attr($release_lng ?: '153.2773'); ?>"
+                   href="https://www.google.com/maps?q=<?php echo esc_attr($release_lat); ?>,<?php echo esc_attr($release_lng); ?>"
                    target="_blank"
                    rel="noopener"
                    class="open-in-google-maps">
                     Open in Google Maps ↗
                 </a>
             </p>
+            <?php endif; ?>
         </div>
     </div>
     <?php endif; ?>
@@ -223,6 +227,7 @@ add_shortcode('koala_release_map', function () {
 let releaseMapInitialized = false;
 let releaseMap, releaseMarker;
 let releaseOriginalLat, releaseOriginalLng;
+let releaseHadPin = false; // true when a release location was already saved
 
 // Helpers are prefixed kRel so this script can share a page with the location editor
 const K_REL_MAX_JUMP_M = 2000; // warn when an address and the pin are further apart than this
@@ -271,6 +276,29 @@ function kRelCoordsValid(lat, lng) {
 function kRelKeepPin() {
     const el = kRelEl('release-keep-pin');
     return !!(el && el.checked);
+}
+
+// Where the map is centred when there is no pin yet. It is only a view; it is never put in the boxes or saved.
+const K_REL_DEFAULT_CENTER = { lat: -28.8136, lng: 153.2773 };
+
+function kRelOnDragEnd() {
+    kRelClearDirty();
+    const pos = releaseMarker.getPosition();
+    kRelEl('release_lat').value = pos.lat().toFixed(6);
+    kRelEl('release_lng').value = pos.lng().toFixed(6);
+    reverseGeocodeRelease(pos.lat(), pos.lng());
+}
+
+// Puts the pin on the map, creating it the first time one is chosen
+function kRelSetPin(loc) {
+    if (releaseMarker) {
+        releaseMarker.setPosition(loc);
+        return;
+    }
+    releaseMarker = new google.maps.Marker({ position: loc, map: releaseMap, draggable: true, title: 'Drag to set release location' });
+    releaseMarker.addListener('dragend', kRelOnDragEnd);
+    releaseMap.setZoom(15);
+    kRelNote('empty', '', '');
 }
 
 function kRelComponents(results) {
@@ -336,18 +364,18 @@ function kRelApplyComponents(c, pos, opts) {
 // An address (autocomplete choice or typed text) has been resolved to a place
 function kRelUseAddressResult(locObj, components, formattedAddress, partial) {
     const pos = kRelPlain(locObj);
-    const prev = kRelPlain(releaseMarker.getPosition());
+    const prev = releaseMarker ? kRelPlain(releaseMarker.getPosition()) : null;
     if (formattedAddress) {
         kRelEl('release_address').value = formattedAddress;
         kRel.lastAutocompleteValue = formattedAddress;
     }
     if (!kRelKeepPin()) {
-        releaseMarker.setPosition(locObj);
+        kRelSetPin(locObj);
         releaseMap.setCenter(locObj);
         kRelEl('release_lat').value = pos.lat.toFixed(6);
         kRelEl('release_lng').value = pos.lng.toFixed(6);
     }
-    const jump = kRelDistanceM(prev, pos);
+    const jump = prev ? kRelDistanceM(prev, pos) : 0;
     if (jump > K_REL_MAX_JUMP_M) {
         kRelNote('distance', 'warn', kRelKeepPin()
             ? 'This address is about ' + kRelFormatDistance(jump) + ' from the pin you kept. A road name on its own can match a different place, so check it is the right one.'
@@ -419,17 +447,16 @@ function initReleaseMap() {
     let lat = parseFloat(releaseLatInput.value);
     let lng = parseFloat(releaseLngInput.value);
 
-    if (!kRelCoordsValid(lat, lng)) {
-        lat = -28.8136;
-        lng = 153.2773;
-        releaseLatInput.value = lat.toFixed(6);
-        releaseLngInput.value = lng.toFixed(6);
+    // No saved release location: the boxes and the map start empty, nothing is made up
+    releaseHadPin = kRelCoordsValid(lat, lng) && !(lat === 0 && lng === 0);
+    if (!releaseHadPin) {
+        releaseLatInput.value = '';
+        releaseLngInput.value = '';
     }
+    releaseOriginalLat = releaseHadPin ? lat : undefined;
+    releaseOriginalLng = releaseHadPin ? lng : undefined;
 
-    releaseOriginalLat = lat;
-    releaseOriginalLng = lng;
-
-    const mapCenter = { lat, lng };
+    const mapCenter = releaseHadPin ? { lat, lng } : K_REL_DEFAULT_CENTER;
 
     try {
         if (!google || !google.maps) {
@@ -443,25 +470,27 @@ function initReleaseMap() {
         }
 
         releaseMap = new google.maps.Map(releaseMapElement, {
-            zoom: 15,
+            zoom: releaseHadPin ? 15 : 9,
             center: mapCenter,
             mapTypeId: google.maps.MapTypeId.SATELLITE
         });
 
-        releaseMarker = new google.maps.Marker({
-            position: mapCenter,
-            map: releaseMap,
-            draggable: true,
-            title: 'Drag to set release location'
-        });
-
-        releaseMarker.addListener('dragend', function () {
-            kRelClearDirty();
-            const pos = releaseMarker.getPosition();
-            releaseLatInput.value = pos.lat().toFixed(6);
-            releaseLngInput.value = pos.lng().toFixed(6);
-            reverseGeocodeRelease(pos.lat(), pos.lng());
-        });
+        if (releaseHadPin) {
+            kRelSetPin(mapCenter);
+        } else {
+            kRelNote('empty', 'info', 'No release location saved yet. Type an address, use GPS, or click the map to place the pin.');
+            // Only the first pin is placed by clicking; after that it is dragged
+            releaseMap.addListener('click', function (event) {
+                if (releaseMarker || !event || !event.latLng) return;
+                kRelClearDirty();
+                const pos = kRelPlain(event.latLng);
+                kRelSetPin(event.latLng);
+                releaseMap.setCenter(event.latLng);
+                releaseLatInput.value = pos.lat.toFixed(6);
+                releaseLngInput.value = pos.lng.toFixed(6);
+                reverseGeocodeRelease(pos.lat, pos.lng);
+            });
+        }
 
         const autocomplete = new google.maps.places.Autocomplete(releaseAddressInput, {
             types: ['address'],
@@ -506,6 +535,7 @@ function initReleaseMap() {
         });
 
         function updateReleaseMapFromLatLngInputs() {
+            if (releaseLatInput.value.trim() === '' || releaseLngInput.value.trim() === '') return; // still being typed
             const lat = parseFloat(releaseLatInput.value);
             const lng = parseFloat(releaseLngInput.value);
             if (!kRelCoordsValid(lat, lng)) {
@@ -516,7 +546,7 @@ function initReleaseMap() {
             kRelClearDirty();
             const newLatLng = { lat, lng };
             releaseMap.setCenter(newLatLng);
-            releaseMarker.setPosition(newLatLng);
+            kRelSetPin(newLatLng);
             reverseGeocodeRelease(lat, lng);
         }
         releaseLatInput.addEventListener('change', updateReleaseMapFromLatLngInputs);
@@ -533,7 +563,7 @@ function initReleaseMap() {
                         releaseLngInput.value = lng.toFixed(6);
                         const latLng = { lat, lng };
                         releaseMap.setCenter(latLng);
-                        releaseMarker.setPosition(latLng);
+                        kRelSetPin(latLng);
                         reverseGeocodeRelease(lat, lng);
                     },
                     function (error) {
@@ -547,6 +577,10 @@ function initReleaseMap() {
 
         kRelEl('release_save').addEventListener('click', function () {
             const btn = this;
+            if (releaseLatInput.value.trim() === '' || releaseLngInput.value.trim() === '') {
+                kRelNote('save', 'error', 'Choose a location first: type an address, use GPS, or click the map. Nothing was saved.');
+                return;
+            }
             const latVal = parseFloat(releaseLatInput.value);
             const lngVal = parseFloat(releaseLngInput.value);
             if (!kRelCoordsValid(latVal, lngVal)) {
@@ -638,12 +672,19 @@ document.addEventListener('DOMContentLoaded', function () {
             kRel.notes = {};
             kRelNote('', '', '');
             // Reset map and marker
-            if (releaseMap && releaseMarker && releaseOriginalLat !== undefined && releaseOriginalLng !== undefined) {
-                const lat = parseFloat('<?php echo esc_js($release_lat); ?>') || -28.8136;
-                const lng = parseFloat('<?php echo esc_js($release_lng); ?>') || 153.2773;
-                const latLng = { lat, lng };
+            if (releaseMap && releaseHadPin && releaseMarker) {
+                const latLng = { lat: parseFloat('<?php echo esc_js($release_lat); ?>'), lng: parseFloat('<?php echo esc_js($release_lng); ?>') };
                 releaseMap.setCenter(latLng);
                 releaseMarker.setPosition(latLng);
+            } else if (releaseMap && !releaseHadPin) {
+                // Nothing was saved, so take away any pin placed during this edit
+                if (releaseMarker) {
+                    releaseMarker.setMap(null);
+                    releaseMarker = null;
+                }
+                releaseMap.setCenter(K_REL_DEFAULT_CENTER);
+                releaseMap.setZoom(9);
+                kRelNote('empty', 'info', 'No release location saved yet. Type an address, use GPS, or click the map to place the pin.');
             }
         });
     }

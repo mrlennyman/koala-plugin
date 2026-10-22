@@ -3,7 +3,7 @@ Contributors: websitealchemy
 Tags: acf, custom post type, wildlife, maps, forms
 Requires at least: 6.2
 Requires PHP: 7.4
-Stable tag: 1.4.1
+Stable tag: 1.4.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,6 +24,10 @@ Install the release zip once via Plugins > Add New > Upload Plugin and activate 
 Enter your Google Maps API key under Settings > Koala Plugin, or define KRS_MAPS_BROWSER_KEY in wp-config.php (the constant takes priority).
 
 == Changelog ==
+
+= 1.4.2 =
+* The release location editor no longer fills in a default location. With no saved release location, the Latitude and Longitude boxes and the map pin start empty until an address, GPS, typed coordinates or a click on the map chooses one (the map is only centred on the region). Saving with nothing chosen is blocked with a clear message, and the "Open in Google Maps" link is hidden until there is a location. Release locations that are already saved behave as before.
+* Settings > Koala Plugin: the Default Latitude, Default Longitude and Bounds boxes are wider so the whole value shows instead of being cut off.
 
 = 1.4.1 =
 * Fixed the Koalas list in wp-admin loading very slowly: the Location incomplete count is now a single cached query that refreshes when a koala or its location fields change.

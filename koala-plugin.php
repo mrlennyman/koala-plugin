@@ -2,7 +2,7 @@
 /*
 Plugin Name: Koala CPT Plugin
 Description: Manages Koala CPT shortcodes and maps.
-Version: 1.4.1
+Version: 1.4.2
 Author: John Leonard
 */
 

@@ -117,7 +117,7 @@ add_action('admin_init', function () {
             function () use ($key, $default_value) {
                 $settings = get_option('koala_sighting_form_settings', []);
                 $value = $settings[$key] ?? $default_value;
-                echo '<input type="text" inputmode="decimal" id="koala_sighting_form_settings_' . esc_attr($key) . '" name="koala_sighting_form_settings[' . esc_attr($key) . ']" value="' . esc_attr($value) . '" class="small-text" />';
+                echo '<input type="text" inputmode="decimal" id="koala_sighting_form_settings_' . esc_attr($key) . '" name="koala_sighting_form_settings[' . esc_attr($key) . ']" value="' . esc_attr($value) . '" class="regular-text" style="width:14em;" />';
             },
             'koala-plugin-settings',
             'koala_map_defaults_section'
